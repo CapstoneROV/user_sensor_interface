@@ -1,0 +1,23 @@
+<launch>
+    <!-- Front-facing camera -->
+    <node name="camera_stream" pkg="user_sensor_interface" type="network_stream.py">
+        <param name="mode" value="0"/>
+        <param name="pub_topic" value="/camera_stream"/>
+        <param name="width" value="1280"/>
+        <param name="height" value="720"/>
+        <param name="channels" value="3"/>
+        <param name="host" value="0.0.0.0"/>
+        <param name="uri_postfix" value=":5600"/>
+    </node>
+    <!-- MBE -->
+    <node name="mbe_stream" pkg="user_sensor_interface" type="network_stream.py">
+        <param name="mode" value="1"/>
+        <param name="pub_topic" value="/mbe_stream"/>
+        <param name="width" value="256"/>
+        <param name="height" value="1024"/>
+        <param name="channels" value="3"/>
+        <param name="host" value="192.168.2.42"/>
+        <param name="uri_postfix" value=":8554/raw"/>
+        <param name="exceptional_case" value="1"/>
+    </node>
+</launch>

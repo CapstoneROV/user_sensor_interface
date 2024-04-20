@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-# Node to read network videostream (UDP / RTSP) and publish in ROS using gstreamer
+# Node to read network videostream (UDP / RTSP) and publish in ROS using GStreamer
 # 
-# gstreamer + subprocess:
+# GStreamer + subprocess:
 # https://stackoverflow.com/a/71911592
 # https://stackoverflow.com/questions/29794053/streaming-mp4-video-file-on-gstreamer
 # https://stackoverflow.com/a/10012262
@@ -71,7 +71,7 @@ class NetworkStream:
                     # Reset countdown
                     timeout_countdown = 0
 
-                    # Get image from gstreamer
+                    # Get image from GStreamer
                     raw = self.sp.stdout.read(self.width * self.height * self.channels)
                     read_time = rospy.Time.now()
                     if len(raw) < self.width * self.height * self.channels:
@@ -88,7 +88,7 @@ class NetworkStream:
                 
                 else:
                     timeout_countdown += 1
-                    rospy.logwarn("[network_stream] gstreamer timed out: {} / 5".format(timeout_countdown))
+                    rospy.logwarn("[network_stream] GStreamer timed out: {} / 5".format(timeout_countdown))
                     if timeout_countdown == 5:
                         break
 

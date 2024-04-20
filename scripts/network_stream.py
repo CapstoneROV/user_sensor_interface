@@ -6,19 +6,17 @@
 # https://stackoverflow.com/questions/29794053/streaming-mp4-video-file-on-gstreamer
 # https://stackoverflow.com/a/10012262
 # https://stackoverflow.com/a/41401487
+# https://stackoverflow.com/a/12272262
 # 
 # ROS:
 # http://wiki.ros.org/ROS/Tutorials/WritingPublisherSubscriber%28python%29
 # http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
 
 import rospy
-import sys
-import cv2
 import numpy as np
 import subprocess as sp
 import shlex
 import select
-from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 import signal
@@ -38,22 +36,20 @@ class NetworkStream:
         self.uri_postfix = rospy.get_param("~uri_postfix")
         self.case = rospy.get_param("~exceptional_case", 0)
         self.pub = rospy.Publisher(self.pub_topic, Image, queue_size=5)
-        self.str_pub = rospy.Publisher("debug{}".format(self.mode), String, queue_size=5)
 
     def connect(self):
         # UDP
         if self.mode == 0:
-            uri = 'udp://' + self.host + self.uri_postfix
+            self.uri = 'udp://' + self.host + self.uri_postfix
             self.sp = sp.Popen(shlex.split(
-                # 'gst-launch-1.0 --quiet udpsrc uri={} close-socket=false multicast-iface=false auto-multicast=true ! application/x-rtp, payload=96 ! queue2 ! rtph264depay ! avdec_h264 ! videoconvert ! capsfilter caps="video/x-raw, format=BGR" ! fdsink'.format(uri)
-                'gst-launch-1.0 --quiet udpsrc port=5600 close-socket=false multicast-iface=false auto-multicast=true ! application/x-rtp, payload=96 ! queue2 ! rtph264depay ! avdec_h264 ! videoconvert ! capsfilter caps="video/x-raw, format=BGR" ! fdsink'
+                'gst-launch-1.0 --quiet udpsrc uri={} close-socket=false multicast-iface=false auto-multicast=true ! application/x-rtp, payload=96 ! queue2 ! rtph264depay ! avdec_h264 ! videoconvert ! capsfilter caps="video/x-raw, format=BGR" ! fdsink'.format(self.uri)
             ), stdout=sp.PIPE)
 
         # RTSP
         else:
-            uri = 'rtsp://' + self.host + self.uri_postfix
+            self.uri = 'rtsp://' + self.host + self.uri_postfix
             self.sp = sp.Popen(shlex.split(
-                'gst-launch-1.0 --quiet rtspsrc location={} ! queue2 ! rtph264depay ! avdec_h264 ! videoconvert ! capsfilter caps="video/x-raw, format=BGR" ! fdsink'.format(uri)
+                'gst-launch-1.0 --quiet rtspsrc location={} ! queue2 ! rtph264depay ! avdec_h264 ! videoconvert ! capsfilter caps="video/x-raw, format=BGR" ! fdsink'.format(self.uri)
             ), stdout=sp.PIPE)
 
     def run(self):
@@ -61,49 +57,54 @@ class NetworkStream:
             try:
                 self.handle_case(pre=True)
             except Exception as e:
-                print("[network_stream] Exception: {}".format(e))
+                rospy.logerr("[network_stream] Exception: {}".format(e))
                 return
 
         self.connect()
+        rospy.logwarn("[network_stream] Connected to {}".format(self.uri))
+        timeout_countdown = 0
         try:
             while not rospy.is_shutdown():
                 # Read with timeout
-                # p = select.select([sp.stdout], [], [], 5)
-                # if p[0]:
-                # Get image from gstreamer
-                raw = self.sp.stdout.read(self.width * self.height * self.channels)
-                read_time = rospy.Time.now()
-                if len(raw) < self.width * self.height * self.channels:
-                    break
+                p = select.select([self.sp.stdout], [], [], 3)
+                if p[0]:
+                    # Reset countdown
+                    timeout_countdown = 0
 
-                # Process image & publish
-                image = np.frombuffer(raw, np.uint8).reshape((self.height, self.width, self.channels))
-                cv2.imwrite('/home/quan/Desktop/img{}.png'.format(self.mode), image * 32)
-                # if cv2.waitKey(1) & 0xFF == ord('q'): 
-                #     break
+                    # Get image from gstreamer
+                    raw = self.sp.stdout.read(self.width * self.height * self.channels)
+                    read_time = rospy.Time.now()
+                    if len(raw) < self.width * self.height * self.channels:
+                        break
 
-                try:
-                    msg = self.bridge.cv2_to_imgmsg(image, "bgr8")
-                    msg.header.stamp = read_time
-                    self.pub.publish(msg)
-                except CvBridgeError as e:
-                    print("[network_stream] cv_bridge exception: {}".format(e))
+                    # Process image & publish
+                    image = np.frombuffer(raw, np.uint8).reshape((self.height, self.width, self.channels))
+                    try:
+                        msg = self.bridge.cv2_to_imgmsg(image, "bgr8")
+                        msg.header.stamp = read_time
+                        self.pub.publish(msg)
+                    except CvBridgeError as e:
+                        rospy.logwarn("[network_stream] cv_bridge exception: {}".format(e))
                 
-                # else:
-                #     print("[network_stream] gstreamer timed out")
+                else:
+                    timeout_countdown += 1
+                    rospy.logwarn("[network_stream] gstreamer timed out: {} / 5".format(timeout_countdown))
+                    if timeout_countdown == 5:
+                        break
 
         # Catch ROS shutdown exception
         except KeyboardInterrupt:
             pass
+        except select.error:
+            pass
         except Exception as e:
-            print("[network_stream] Exception: {}".format(e))
+            rospy.logerr("[network_stream] Exception: {}".format(e))
             
         # Cleanup
-        cv2.destroyAllWindows()
-        self.sp.stdout.close()
-        self.sp.wait()
         if self.case:
             self.handle_case(post=True)
+        self.sp.stdout.close()
+        self.sp.kill()
 
     def handle_case(self, pre=False, post=False):
         # MBE
@@ -122,12 +123,13 @@ class NetworkStream:
                 response = requests.put(api_url + '/streamtype', json={
                     "value": 2,
                 })
-                print(response)
+                rospy.logwarn("[network_stream] MBE enabled")
             if post:
                 # Disable the sonar
                 requests.patch(api_url + '/transponder', json={
                     "enable": False,
                 })
+                rospy.logwarn("[network_stream] MBE disabled")
 
 
 if __name__ == '__main__':
